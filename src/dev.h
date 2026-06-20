@@ -43,6 +43,7 @@ struct device {
 	void (*close)(struct device*);
 	int (*read)(struct device*, struct dev_input*);
 	void (*set_led)(struct device*, int);
+	void (*set_lcd)(struct device*, int offset, int len, unsigned char *data);
 
 	int (*bnhack)(int bn);
 
@@ -50,6 +51,7 @@ struct device {
 };
 
 void init_devices(void);
+struct device *add_device(void);
 void init_devices_serial(void);
 int init_devices_usb(void);
 

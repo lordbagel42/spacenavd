@@ -35,6 +35,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "client.h"
 #include "proto_unix.h"
 #include "kbemu.h"
+#include "ws.h"
+#include "dev_sim.h"
 #ifdef USE_X11
 #include "proto_x11.h"
 #endif
@@ -92,10 +94,6 @@ int main(int argc, char **argv)
 						if(strcmp(logfile, argv[i]) != 0) {
 							printf("logfile: %s\n", logfile);
 						}
-						/* when the user specifies a log file in the command line
-						 * the expectation is to use it, regardless of whether
-						 * spacenavd is started daemonized or not.
-						 */
 						force_logfile = 1;
 					}
 					break;
@@ -112,6 +110,12 @@ opt_pidfile:		if(!argv[++i]) {
 					printf("spacenavd " VERSION "\n");
 					return 0;
 
+				case 's':
+					{
+						struct device *dev = add_device();
+						open_dev_sim(dev);
+					}
+					break;
 				case 'h':
 					print_usage(argv[0]);
 					return 0;
@@ -182,6 +186,7 @@ opt_pidfile:		if(!argv[++i]) {
 	init_x11();
 #endif
 	kbemu_init();
+	ws_init(8000);
 
 	atexit(cleanup);
 
@@ -207,13 +212,11 @@ opt_pidfile:		if(!argv[++i]) {
 			if(fd > max_fd) max_fd = fd;
 		}
 
-		/* the UNIX domain socket listening for connections */
 		if((fd = get_unix_socket()) != -1) {
 			FD_SET(fd, &rset);
 			if(fd > max_fd) max_fd = fd;
 		}
 
-		/* all the UNIX socket clients */
 		client_iter = first_client();
 		while(client_iter) {
 			if(get_client_type(client_iter) == CLIENT_UNIX) {
@@ -226,7 +229,8 @@ opt_pidfile:		if(!argv[++i]) {
 			client_iter = next_client();
 		}
 
-		/* and the X server socket */
+		ws_add_fds(&rset, &max_fd);
+
 #ifdef USE_X11
 		if((fd = get_x11_socket()) != -1) {
 			FD_SET(fd, &rset);
@@ -234,14 +238,10 @@ opt_pidfile:		if(!argv[++i]) {
 		}
 #endif
 
-		/* also the self-pipe read-end for safe SIGHUP handling */
 		FD_SET(pfd[0], &rset);
-		if(pfd[0] > max_fd) max_fd = fd;
+		if(pfd[0] > max_fd) max_fd = pfd[0];
 
 		do {
-			/* if there is at least one device out of the deadzone and repeat is enabled
-			 * wait for only as long as specified in cfg.repeat_msec
-			 */
 			struct timeval tv, *timeout = 0;
 			if(cfg.repeat_msec >= 0) {
 				dev = get_devices();
@@ -273,7 +273,7 @@ opt_pidfile:		if(!argv[++i]) {
 			}
 		}
 	}
-	return 0;	/* unreachable */
+	return 0;
 }
 
 static void print_usage(const char *argv0)
@@ -281,67 +281,48 @@ static void print_usage(const char *argv0)
 	printf("usage: %s [options]\n", argv0);
 	printf("options:\n");
 	printf(" -d: do not daemonize\n");
-	printf(" -c <file>: config file path (default: " DEF_CFGFILE ")\n");
-	printf(" -l <file>|syslog: log file path or log to syslog (default: " DEF_LOGFILE ")\n");
-	printf(" -p,-pidfile <file>: pidfile path (default: " DEF_PIDFILE ")\n");
-	printf(" -v: verbose output (use multiple times for greater effect)\n");
-	printf(" -V,-version: print version number and exit\n");
-	printf(" -h,-help: print usage information and exit\n");
+	printf(" -c <file>: config file path\n");
+	printf(" -l <file>|syslog: log file path or log to syslog\n");
+	printf(" -p,-pidfile <file>: pidfile path\n");
+	printf(" -v: verbose output\n");
+	printf(" -V,-version: print version number\n");
+	printf(" -h,-help: print usage information\n");
+ printf(" -s: start with a simulated Enterprise device\n");
 }
 
 static void cleanup(void)
 {
 	struct device *dev;
-
 	kbemu_cleanup();
-
+	ws_shutdown();
 #ifdef USE_X11
-	close_x11();	/* call to avoid leaving garbage in the X server's root windows */
+	close_x11();
 #endif
 	close_unix();
-
 	shutdown_hotplug();
-
 	dev = get_devices();
 	while(dev) {
 		struct device *tmp = dev;
 		dev = dev->next;
 		remove_device(tmp);
 	}
-
-	if(pidfile) {
-		remove(pidfile);
-	}
+	if(pidfile) remove(pidfile);
 }
 
 static void redir_log(int fallback_syslog)
 {
 	int i, fd = -1;
-
-	if(logfile) {
-		fd = start_logfile(logfile);
-	}
-
+	if(logfile) fd = start_logfile(logfile);
 	if(fd >= 0 || fallback_syslog) {
-		/* redirect standard input/output/error
-		 * best effort attempt to make either the logfile or the syslog socket
-		 * accessible through stdout/stderr, just in case any printfs survived
-		 * the logmsg conversion.
-		 */
-		for(i=0; i<3; i++) {
-			close(i);
-		}
-
+		for(i=0; i<3; i++) close(i);
 		open("/dev/zero", O_RDONLY);
-
 		if(fd == -1) {
 			fd = start_syslog(SYSLOG_ID);
-			dup(1);		/* not guaranteed to work */
+			dup(1);
 		} else {
 			dup(fd);
 		}
 	}
-
 	setvbuf(stdout, 0, _IOLBF, 0);
 	setvbuf(stderr, 0, _IONBF, 0);
 }
@@ -349,19 +330,14 @@ static void redir_log(int fallback_syslog)
 static void daemonize(void)
 {
 	int pid;
-
 	chdir("/");
-
 	redir_log(1);
-
-	/* release controlling terminal */
 	if((pid = fork()) == -1) {
 		perror("failed to fork");
 		exit(1);
 	} else if(pid) {
 		exit(0);
 	}
-
 	setsid();
 }
 
@@ -370,16 +346,11 @@ static int write_pid_file(void)
 	struct stat st;
 	FILE *fp;
 	int pid = getpid();
-
 	if(stat(pidfile, &st) == 0 && !(st.st_mode & S_IFREG)) {
-		/* don't try to use anything other than regular files as a pid file */
 		pidfile = 0;
 		return -1;
 	}
-
-	if(!(fp = fopen(pidfile, "w"))) {
-		return -1;
-	}
+	if(!(fp = fopen(pidfile, "w"))) return -1;
 	fprintf(fp, "%d\n", pid);
 	fclose(fp);
 	return 0;
@@ -390,31 +361,20 @@ static int find_running_daemon(void)
 	FILE *fp;
 	int s, pid;
 	struct sockaddr_un addr;
-
-	/* try to open the pid-file */
-	if(!(fp = fopen(pidfile, "r"))) {
-		return -1;
-	}
+	if(!(fp = fopen(pidfile, "r"))) return -1;
 	if(fscanf(fp, "%d\n", &pid) != 1) {
 		fclose(fp);
 		return -1;
 	}
 	fclose(fp);
-
-	/* make sure it's not just a stale pid-file */
-	if((s = socket(PF_UNIX, SOCK_STREAM, 0)) == -1) {
-		return -1;
-	}
+	if((s = socket(PF_UNIX, SOCK_STREAM, 0)) == -1) return -1;
 	memset(&addr, 0, sizeof addr);
 	addr.sun_family = AF_UNIX;
 	strncpy(addr.sun_path, SOCK_NAME, sizeof addr.sun_path);
-
 	if(connect(s, (struct sockaddr*)&addr, sizeof addr) == -1) {
 		close(s);
 		return -1;
 	}
-
-	/* managed to connect alright, it's running... */
 	close(s);
 	return pid;
 }
@@ -425,38 +385,27 @@ static void handle_events(fd_set *rset)
 	struct device *dev;
 	struct dev_input inp;
 
-	/* handle signal pipe */
 	if(FD_ISSET(pfd[0], rset)) {
 		int tmp;
-		read(pfd[0], &tmp, sizeof tmp);	/* eat up the junk char */
-
+		read(pfd[0], &tmp, sizeof tmp);
 		read_cfg(cfgfile, &cfg);
 		cfg_changed();
 	}
 
-	/* handle anything coming through the UNIX socket */
 	handle_uevents(rset);
+	ws_handle_events(rset);
 
 #ifdef USE_X11
-	/* handle any X11 events (magellan protocol) */
 	handle_xevents(rset);
 #endif
 
-	/* finally read any pending device input data */
 	dev = get_devices();
 	while(dev) {
-		/* keep the next pointer because read_device can potentially destroy
-		 * the device node if the read fails.
-		 */
 		struct device *next = dev->next;
-
 		if((dev_fd = get_device_fd(dev)) != -1 && FD_ISSET(dev_fd, rset)) {
-			/* read an event from the device ... */
 			while(read_device(dev, &inp) != -1) {
-				/* ... and process it, possibly dispatching a spacenav event to clients */
 				process_input(dev, &inp);
 			}
-			/* flush any pending events if we run out of input */
 			inp.type = INP_FLUSH;
 			process_input(dev, &inp);
 		}
@@ -464,9 +413,7 @@ static void handle_events(fd_set *rset)
 	}
 
 	if((hotplug_fd = get_hotplug_fd()) != -1) {
-		if(FD_ISSET(hotplug_fd, rset)) {
-			handle_hotplug();
-		}
+		if(FD_ISSET(hotplug_fd, rset)) handle_hotplug();
 	}
 }
 
@@ -476,9 +423,6 @@ void cfg_changed(void)
 		struct device *dev = get_devices();
 		while(dev) {
 			if(is_device_valid(dev)) {
-				if(verbose) {
-					logmsg(LOG_INFO, "led %s, device: %s\n", cfg.led ? (cfg.led == LED_AUTO ? "auto" : "on"): "off", dev->name);
-				}
 				if(cfg.led == LED_ON || (cfg.led == LED_AUTO && first_client())) {
 					set_device_led(dev, 1);
 				} else {
@@ -488,85 +432,49 @@ void cfg_changed(void)
 			dev = dev->next;
 		}
 	}
-
-	if(strcmp(cfg.serial_dev, prev_cfg.serial_dev) != 0) {
-		struct device *dev, *iter = get_devices();
-		while(iter) {
-			dev = iter;
-			iter = iter->next;
-			if(strcmp(dev->path, prev_cfg.serial_dev) == 0) {
-				remove_device(dev);
-			}
-		}
-		init_devices_serial();
-	}
-
 	prev_cfg = cfg;
 }
 
-/* signals usr1 & usr2 are sent by the spnav_x11 script to start/stop the
- * daemon's connection to the X server.
- */
 static void sig_handler(int s)
 {
 	switch(s) {
 	case SIGHUP:
-		write(pfd[1], &s, 1);	/* write *something* to the pipe to trigger a re-read */
+		write(pfd[1], &s, 1);
 		break;
-
 	case SIGSEGV:
-		logmsg(LOG_ERR, "Segmentation fault caught, trying to exit gracefully\n");
+		logmsg(LOG_ERR, "Segmentation fault caught\n");
 	case SIGINT:
 	case SIGTERM:
 		exit(0);
-
 #ifdef USE_X11
-	case SIGUSR1:
-		init_x11();
-		break;
-
-	case SIGUSR2:
-		close_x11();
-		break;
+	case SIGUSR1: init_x11(); break;
+	case SIGUSR2: close_x11(); break;
 #endif
-
-	default:
-		break;
+	default: break;
 	}
 }
-
 
 static char *fix_path(char *str)
 {
 	char *buf, *tmp;
 	int sz, len;
-
 	if(str[0] == '/') return str;
-
-	len = strlen(str) + 1;	/* +1 for the path separator */
+	len = strlen(str) + 1;
 	sz = PATH_MAX;
-
-	if(!(buf = malloc(sz + len))) {
-		perror("failed to allocate path buffer");
-		return 0;
-	}
-
+	if(!(buf = malloc(sz + len))) return 0;
 	while(!getcwd(buf, sz)) {
 		if(errno == ERANGE) {
 			sz *= 2;
 			if(!(tmp = realloc(buf, sz + len))) {
-				perror("failed to reallocate path buffer");
 				free(buf);
 				return 0;
 			}
 			buf = tmp;
 		} else {
-			perror("getcwd failed");
 			free(buf);
 			return 0;
 		}
 	}
-
 	sprintf(buf + strlen(buf), "/%s", str);
 	return buf;
 }

@@ -1,0 +1,16 @@
+Spacenav daemon 823cadd
+reading config file: /etc/spnavrc
+failed to open config file /etc/spnavrc: No such file or directory. using defaults.
+failed to open /dev/input/event0: Permission denied
+failed to bind unix socket: /var/run/spnav.sock: Permission denied
+trying to open X11 display ":0.0"
+   XAUTHORITY=/home/jules/.Xauthority
+failed to open X11 display ":0.0"
+waiting for the X socket file to appear
+failed to open /dev/uinput: No such file or directory
+Make sure you have permissions to access /dev/uinput
+reading config file: /etc/spnavrc
+failed to open config file /etc/spnavrc: No such file or directory. using defaults.
+failed to open /dev/input/event0: Permission denied
+failed to open /dev/input/event0: Permission denied
+logfile: /app/stdout
