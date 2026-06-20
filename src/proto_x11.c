@@ -117,7 +117,7 @@ int init_x11(void)
 	}
 
 	if(!(dpy = XOpenDisplay(0))) {
-		logmsg(LOG_ERR, "failed to open X11 display \"%s\"\n", getenv("DISPLAY"));
+		logmsg(LOG_WARNING, "failed to open X11 display \"%s\"\n", getenv("DISPLAY"));
 
 		xdet_start();
 		return -1;
