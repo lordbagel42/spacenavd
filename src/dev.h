@@ -51,6 +51,7 @@ struct device {
 };
 
 void init_devices(void);
+struct device *add_device(void);
 void init_devices_serial(void);
 int init_devices_usb(void);
 

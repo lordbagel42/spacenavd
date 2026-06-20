@@ -70,7 +70,7 @@ static struct usbdb_entry {
 static struct device *dev_list = NULL;
 static unsigned short last_id;
 
-static struct device *add_device(void)
+struct device *add_device(void)
 {
 	struct device *dev;
 	if(!(dev = malloc(sizeof *dev))) return 0;
@@ -86,6 +86,7 @@ void remove_device(struct device *dev)
 {
 	struct device dummy, *iter = &dummy;
 	dummy.next = dev_list;
+	iter = &dummy;
 	while(iter->next) {
 		if(iter->next == dev) {
 			iter->next = dev->next;
@@ -98,24 +99,45 @@ void remove_device(struct device *dev)
 	free(dev);
 }
 
-void init_devices(void)
-{
-	init_devices_serial();
-	init_devices_usb();
-	if(!dev_list) {
-		struct device *dev = add_device();
-		if(open_dev_sim(dev) == -1) remove_device(dev);
+static int match_usbdev(const struct usb_dev_info *devinfo) {
+	int vid = devinfo->vendorid;
+
+	if (vid == 0x256f || vid == 0x046d) return 1;
+	return 0;
+}
+
+static struct usbdb_entry *find_usbdb_entry(unsigned int vid, unsigned int pid) {
+	for(int i=0; usbdb[i].usbid[0] != -1; i++) {
+		if(usbdb[i].usbid[0] == vid && usbdb[i].usbid[1] == pid) return &usbdb[i];
 	}
+	return NULL;
+}
+
+int init_devices_usb(void)
+{
+	struct usb_dev_info *usblist, *usbdev;
+	usblist = find_usb_devices(match_usbdev);
+	usbdev = usblist;
+	while(usbdev) {
+		struct device *dev = add_device();
+		strcpy(dev->path, usbdev->devfiles[0]);
+		struct usbdb_entry *uent = find_usbdb_entry(usbdev->vendorid, usbdev->productid);
+		dev->type = uent ? uent->type : DEV_UNKNOWN;
+		dev->flags = uent ? uent->flags : 0;
+		dev->bnhack = uent ? uent->bnmap : 0;
+		if(open_dev_usb(dev) == -1) remove_device(dev);
+		usbdev = usbdev->next;
+	}
+	free_usb_devices_list(usblist);
+	return 0;
 }
 
 void init_devices_serial(void) {}
 
-int init_devices_usb(void)
+void init_devices(void)
 {
-	/* In this sandbox environment, real USB detection usually fails or is restricted.
-	 * We keep the function but it will likely return -1, triggering sim fallback in init_devices.
-	 */
-	return -1;
+	init_devices_serial();
+	init_devices_usb();
 }
 
 int get_device_fd(struct device *dev) { return dev ? dev->fd : -1; }

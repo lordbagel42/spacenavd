@@ -36,6 +36,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "proto_unix.h"
 #include "kbemu.h"
 #include "ws.h"
+#include "dev_sim.h"
 #ifdef USE_X11
 #include "proto_x11.h"
 #endif
@@ -109,6 +110,12 @@ opt_pidfile:		if(!argv[++i]) {
 					printf("spacenavd " VERSION "\n");
 					return 0;
 
+				case 's':
+					{
+						struct device *dev = add_device();
+						open_dev_sim(dev);
+					}
+					break;
 				case 'h':
 					print_usage(argv[0]);
 					return 0;
@@ -280,6 +287,7 @@ static void print_usage(const char *argv0)
 	printf(" -v: verbose output\n");
 	printf(" -V,-version: print version number\n");
 	printf(" -h,-help: print usage information\n");
+ printf(" -s: start with a simulated Enterprise device\n");
 }
 
 static void cleanup(void)

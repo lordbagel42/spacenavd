@@ -34,7 +34,7 @@ In order to compile the spacenavd daemon, you'll need the following:
 
 For the configuration GUI and simulator:
  - Python 3
- - websockets (python library: `pip install websockets`)
+ - websockets, customtkinter (python libraries: `pip install websockets customtkinter`)
  - tkinter (usually included with Python)
 
 Installation
@@ -48,6 +48,10 @@ Running spacenavd
 Start the daemon with:
 ```bash
 sudo spacenavd -d -v
+To run with a simulated device (no hardware needed):
+```bash
+sudo spacenavd -d -v -s
+```
 ```
 The WebSocket server will start on port 8000 by default.
 
