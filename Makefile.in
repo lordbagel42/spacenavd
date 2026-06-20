@@ -7,7 +7,7 @@ ctl = spnavd_ctl
 
 CC ?= gcc
 CFLAGS = $(cc_cflags) $(dbg) $(opt) -I$(srcdir)/src $(xinc) $(add_cflags)
-LDFLAGS = $(xlib) $(add_ldflags) -lm
+LDFLAGS = $(xlib) $(add_ldflags) -lm -lssl -lcrypto
 
 $(bin): $(obj)
 	$(CC) -o $@ $(obj) $(LDFLAGS)
